@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Private Vault</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+ body { font-family: Arial, sans-serif; background:#111; color:#eee; margin:0; padding:16px; }
+ h1 { font-size:22px; }
+ input, button { font-size:16px; padding:12px; margin:6px 0; width:100%; box-sizing:border-box; border-radius:8px; border:none; }
+ input { background:#222; color:#eee; }
+ button { background:#2e8b57; color:white; }
+ #logout { background:#555; }
+ .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+ .grid img, .grid video { width:100%; border-radius:8px; }
+ .item { position:relative; }
+ .del { position:absolute; top:4px; right:4px; width:auto; padding:4px 8px; background:#b22222; font-size:12px; }
+ #msg { color:#ffb347; }
+</style>
+</head>
+<body>
+<h1>My Private Vault</h1>
+<p id="msg"></p>
+
+<div id="loginBox">
+ <input id="email" type="email" placeholder="Email">
+ <input id="password" type="password" placeholder="Password">
+ <button onclick="login()">Login</button>
+</div>
+
+<div id="appBox" style="display:none">
+ <input id="fileInput" type="file" accept="image/*,video/*" multiple>
+ <button onclick="upload()">Upload</button>
+ <button id="logout" onclick="logout()">Logout</button>
+ <div class="grid" id="gallery"></div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://kvcxxligvtdohqgkbosa.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_h0LCkw6LYz3sfjyE9cRcxg_jyHyNF8c';
+const BUCKET = 'private-photos';
+const FOLDER = 'private-photos';
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+function say(t){ document.getElementById('msg').textContent = t; }
+
+async function login(){
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const { error } = await db.auth.signInWithPassword({ email, password });
+  if (error) { say('Login failed: ' + error.message); return; }
+  say(''); showApp();
+}
+
+async function logout(){
+  await db.auth.signOut();
+  document.getElementById('appBox').style.display='none';
+  document.getElementById('loginBox').style.display='block';
+}
+
+async function showApp(){
+  document.getElementById('loginBox').style.display='none';
+  document.getElementById('appBox').style.display='block';
+  loadGallery();
+}
+
+async function upload(){
+  const files = document.getElementById('fileInput').files;
+  if (!files.length) { say('Choose photos first'); return; }
+  say('Uploading...');
+  for (const f of files) {
+    const name = FOLDER + '/' + Date.now() + '_' + f.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+    const { error } = await db.storage.from(BUCKET).upload(name, f);
+    if (error) { say('Upload error: ' + error.message); return; }
+  }
+  say('Done!');
+  document.getElementById('fileInput').value='';
+  loadGallery();
+}
+
+async function loadGallery(){
+  const g = document.getElementById('gallery');
+  g.innerHTML='';
+  const { data, error } = await db.storage.from(BUCKET).list(FOLDER, { limit:200, sortBy:{column:'created_at', order:'desc'} });
+  if (error) { say(error.message); return; }
+  for (const f of data) {
+    if (!f.name || f.name === '.emptyFolderPlaceholder') continue;
+    const path = FOLDER + '/' + f.name;
+    const { data: s } = await db.storage.from(BUCKET).createSignedUrl(path, 3600);
+    if (!s) continue;
+    const div = document.createElement('div');
+    div.className='item';
+    const isVideo = /\.(mp4|mov|webm|m4v)$/i.test(f.name);
+    const el = document.createElement(isVideo ? 'video' : 'img');
+    el.src = s.signedUrl;
+    if (isVideo) el.controls = true;
+    const del = document.createElement('button');
+    del.className='del'; del.textContent='X';
+    del.onclick = async () => {
+      if (!confirm('Delete?')) return;
+      await db.storage.from(BUCKET).remove([path]);
+      loadGallery();
+    };
+    div.appendChild(el); div.appendChild(del); g.appendChild(div);
+  }
+}
+
+(async () => {
+  const { data } = await db.auth.getSession();
+  if (data.session) showApp();
+})();
+</script>
+</body>
+</html>
